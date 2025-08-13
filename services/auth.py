@@ -75,3 +75,12 @@ def get_display_name(user_id: str) -> str:
         if r.get("user_id") == user_id:
             return r.get("display_name") or r.get("username") or user_id
     return user_id
+
+def get_username(user_id: str) -> str:
+    """
+    user_id → username 조회 (없으면 user_id 반환)
+    """
+    for r in _load_users():
+        if r.get("user_id") == user_id:
+            return r.get("username") or user_id
+    return user_id

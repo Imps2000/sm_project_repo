@@ -5,7 +5,8 @@ import streamlit as st
 
 from services.auth import (
     try_signup, try_login,
-    get_current_user_id, set_current_user_id, get_display_name
+    get_current_user_id, set_current_user_id,
+    get_display_name, get_username
 )
 
 from datetime import datetime, timedelta
@@ -215,7 +216,15 @@ tab_feed, tab_activity = st.tabs(["📰 피드", "🗂️ 활동 로그"])
 with tab_feed:
 # ---- Sidebar: Account / Scope / Hashtag / Search ------------------------
     with st.sidebar:
-        st.markdown(f"**계정:** {get_display_name(CURRENT_USER)} ({CURRENT_USER})")
+        _disp = get_display_name(CURRENT_USER)
+        _handle = get_username(CURRENT_USER)
+        st.markdown(f"**계정:** {_disp} · @{_handle}")
+
+        # (선택) 개발자 정보 보기 - 내부 ID를 원할 때만 토글로 노출
+        _dev = st.checkbox("🔧 내부ID(개발자용 후에 표기삭제)", value=False)
+        if _dev:
+            st.caption(f"internal_id: `{CURRENT_USER}`")
+
         if st.button("로그아웃", key="logout-btn"):
             set_current_user_id(st, None)
             st.success("로그아웃 되었습니다.")
