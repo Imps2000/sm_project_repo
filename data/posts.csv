@@ -1,2 +1,7 @@
 post_id,author_id,content,created_at,original_post_id,is_deleted
 p_0001,u_0001,테스트,2025-08-13T10:11:24.121058+09:00,,0
+p_0002,u_0001,,2025-08-13T10:15:30.229451+09:00,p_0001,0
+p_0003,u_0001,,2025-08-13T10:15:36.662241+09:00,p_0001,0
+p_0004,u_0001,,2025-08-13T10:15:38.147978+09:00,p_0003,0
+p_0005,u_0001,sdkjfasklfjaslkfasdlfjaskjfksjfsfsadjfkasdjkfsdflsajlkfaslfjaslfjasfljsda,2025-08-13T10:15:43.336169+09:00,,0
+p_0006,u_0001,,2025-08-13T10:15:45.028836+09:00,p_0005,0
