@@ -3,6 +3,11 @@ import re
 import html
 import streamlit as st
 
+from services.auth import (
+    try_signup, try_login,
+    get_current_user_id, set_current_user_id, get_display_name
+)
+
 from datetime import datetime, timedelta
 
 from services.posts import (
@@ -18,8 +23,8 @@ from repo.csv_repo import read_csv
 # ---- App Setup --------------------------------------------------------------
 st.set_page_config(page_title="My Social Feed", page_icon="🗞️", layout="centered")
 st.title("My Social Feed")
-
-CURRENT_USER = "u_0001"
+# 로그인된 사용자 세션에서 읽기 (없으면 None)
+CURRENT_USER = get_current_user_id(st)
 DATA_DIR = "data"
 POSTS_PATH = os.path.join(DATA_DIR, "posts.csv")
 POST_TAGS_PATH = os.path.join(DATA_DIR, "post_hashtags.csv")
@@ -139,11 +144,84 @@ def _activity_rows(limit=100):
     rows.sort(key=lambda r: r["created_at"], reverse=True)
     return rows[:limit]
 
+ 
+# ---- Auth Gate (로그인/회원가입) --------------------------------------------
+if CURRENT_USER is None:
+    st.header("🔐 로그인 / 회원가입")
+
+    # 로그인 / 회원가입 탭
+    tab_login, tab_signup = st.tabs(["로그인", "회원가입"])
+
+    # 공용 상단 안내 (회원가입 직후)
+    if st.session_state.get("signup_done"):
+        st.success("회원가입이 완료되었습니다! 이제 로그인하세요.")
+
+    # ----- 로그인 탭 -----
+    with tab_login:
+        # 회원가입 직후라면 추가 안내 + 아이디 프리필
+        if st.session_state.get("signup_done"):
+            st.info("아래에 아이디를 확인하고 로그인해 주세요.")
+
+        with st.form("login_form", clear_on_submit=False):
+            li_user = st.text_input(
+                "아이디(사용자명)",
+                value=st.session_state.get("post_signup_username", ""),
+                key="li_user",
+            )
+            li_pw = st.text_input("비밀번호", type="password", key="li_pw")
+            ok = st.form_submit_button("로그인", use_container_width=True)
+            if ok:
+                uid = try_login(li_user.strip(), li_pw)
+                if uid:
+                    set_current_user_id(st, uid)
+                    st.success("로그인 성공!")
+                    # 회원가입 상태/프리필 정리
+                    st.session_state.pop("post_signup_username", None)
+                    st.session_state.pop("signup_done", None)
+                    st.rerun()
+                else:
+                    st.error("아이디 또는 비밀번호가 올바르지 않습니다.")
+
+    # ----- 회원가입 탭 -----
+    with tab_signup:
+        if st.session_state.get("signup_done"):
+            # 입력 폼 숨기고 안내만 표시
+            st.info("회원가입이 완료되었습니다. 로그인 탭으로 이동해 로그인해 주세요.")
+            # 원하면 폼을 다시 열 수 있음
+            if st.button("🔄 회원가입 입력 다시 열기", use_container_width=True):
+                st.session_state["signup_done"] = False
+                st.rerun()
+        else:
+            with st.form("signup_form", clear_on_submit=False):
+                su_user = st.text_input("아이디(사용자명)", key="su_user")
+                su_pw = st.text_input("비밀번호", type="password", key="su_pw")
+                su_name = st.text_input("표시 이름(선택)", key="su_name")
+                ok2 = st.form_submit_button("회원가입", use_container_width=True)
+                if ok2:
+                    try:
+                        _ = try_signup(su_user.strip(), su_pw, su_name.strip() or None)
+                        # 상태 저장 후 즉시 새로고침 → 상단 성공 배너/폼 숨김 반영
+                        st.session_state["post_signup_username"] = su_user.strip()
+                        st.session_state["signup_done"] = True
+                        st.rerun()
+                    except Exception as e:
+                        st.error(f"회원가입 실패: {e}")
+
+    st.stop()
+
 # ---- Tabs -------------------------------------------------------------------
 tab_feed, tab_activity = st.tabs(["📰 피드", "🗂️ 활동 로그"])
 
 with tab_feed:
-    # ---- Sidebar: Scope / Hashtag / Search ---------------------------------
+# ---- Sidebar: Account / Scope / Hashtag / Search ------------------------
+    with st.sidebar:
+        st.markdown(f"**계정:** {get_display_name(CURRENT_USER)} ({CURRENT_USER})")
+        if st.button("로그아웃", key="logout-btn"):
+            set_current_user_id(st, None)
+            st.success("로그아웃 되었습니다.")
+            st.rerun()
+
+# ---- Sidebar: Scope / Hashtag / Search ---------------------------------
     st.sidebar.header("보기")
     scope = st.sidebar.radio(
         "피드 범위",
