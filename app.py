@@ -16,9 +16,10 @@ st.set_page_config(page_title="My Social Feed", page_icon="🗞️", layout="cen
 st.title("My Social Feed")
 
 CURRENT_USER = "u_0001"
-POSTS_PATH = os.path.join("data", "posts.csv")
-POST_TAGS_PATH = os.path.join("data", "post_hashtags.csv")
-ACTIVITY_PATH = os.path.join("data", "activity_log.csv")
+DATA_DIR = "data"
+POSTS_PATH = os.path.join(DATA_DIR, "posts.csv")
+POST_TAGS_PATH = os.path.join(DATA_DIR, "post_hashtags.csv")
+ACTIVITY_PATH = os.path.join(DATA_DIR, "activity_log.csv")
 
 # ---- Helpers ----------------------------------------------------------------
 def _all_posts_map() -> dict:
@@ -30,12 +31,30 @@ def _post_hashtags(post_id: str):
         return []
     return [row["hashtag"] for row in read_csv(POST_TAGS_PATH) if row["post_id"] == post_id]
 
+def _matches_query(post_row: dict, q: str, all_posts_map: dict) -> bool:
+    """
+    q(소문자)로 본문/작성자 매칭.
+    - 일반 글: 자신의 content/author_id 검사
+    - 리포스트: 원본이 있으면 원본 content/author_id로 검사
+    """
+    q = (q or "").strip().lower()
+    if not q:
+        return True
+    # 리포스트면 원본 row로 스왑
+    orig_id = post_row.get("original_post_id", "")
+    row = all_posts_map.get(orig_id, post_row) if orig_id else post_row
+    content = (row.get("content") or "").lower()
+    author  = (row.get("author_id") or "").lower()
+    return (q in content) or (q in author)
+
 def _load_posts(scope: str):
     """
     scope: 'all' | 'following'
     - 해시태그 필터가 있으면 우선 적용
     - following: 내가 팔로우한 사람들 + 나 자신만
+    - 마지막 단계에서 '검색' 키워드 필터 적용
     """
+    # 1) 해시태그 필터 우선
     if st.session_state.get("filter_tag"):
         post_ids = set(list_posts_by_hashtag(st.session_state["filter_tag"]))
         rows = list_feed(limit=500)
@@ -43,15 +62,22 @@ def _load_posts(scope: str):
     else:
         rows = list_feed(limit=500)
 
+    # 2) 팔로잉 범위 필터
     if scope == "following":
         following = get_following(CURRENT_USER)
         allowed_authors = following | {CURRENT_USER}
         rows = [r for r in rows if r["author_id"] in allowed_authors]
+
+    # 3) 키워드 검색 필터(본문/작성자, 리포스트는 원본 기준)
+    q = (st.session_state.get("search_q", "") or "").strip().lower()
+    if q:
+        all_map = _all_posts_map()
+        rows = [r for r in rows if _matches_query(r, q, all_map)]
+
     return rows
 
-def _activity_rows(limit=50):
+def _activity_rows(limit=100):
     rows = read_csv(ACTIVITY_PATH) if os.path.exists(ACTIVITY_PATH) else []
-    # 최신순
     rows.sort(key=lambda r: r["created_at"], reverse=True)
     return rows[:limit]
 
@@ -59,7 +85,7 @@ def _activity_rows(limit=50):
 tab_feed, tab_activity = st.tabs(["📰 피드", "🗂️ 활동 로그"])
 
 with tab_feed:
-    # ---- Sidebar: Hashtag + Scope ------------------------------------------
+    # ---- Sidebar: Scope / Hashtag / Search ---------------------------------
     st.sidebar.header("보기")
     scope = st.sidebar.radio(
         "피드 범위",
@@ -73,12 +99,25 @@ with tab_feed:
     filter_tag = st.sidebar.text_input("해시태그(# 없이 입력)", value=st.session_state.get("filter_tag", ""))
     sb_cols = st.sidebar.columns(2)
     with sb_cols[0]:
-        if st.button("적용", use_container_width=True):
+        if st.button("해시태그 적용", use_container_width=True):
             st.session_state["filter_tag"] = filter_tag.strip().lower()
             st.rerun()
     with sb_cols[1]:
-        if st.button("해제", use_container_width=True):
+        if st.button("해시태그 해제", use_container_width=True):
             st.session_state["filter_tag"] = ""
+            st.rerun()
+
+    # 🔎 검색 추가
+    st.sidebar.header("검색")
+    search_q = st.sidebar.text_input("키워드", value=st.session_state.get("search_q", ""))
+    sc1, sc2 = st.sidebar.columns(2)
+    with sc1:
+        if st.button("검색 적용", use_container_width=True):
+            st.session_state["search_q"] = (search_q or "").strip().lower()
+            st.rerun()
+    with sc2:
+        if st.button("검색 해제", use_container_width=True):
+            st.session_state["search_q"] = ""
             st.rerun()
 
     # ---- New Post Form ------------------------------------------------------
@@ -200,7 +239,7 @@ with tab_feed:
                             except Exception as e:
                                 st.error(f"오류: {e}")
 
-            # 댓글 섹션
+            # ----- 댓글 섹션 --------------------------------------------------
             st.markdown("---")
             st.caption(f"💬 댓글 {count_comments(p['post_id'])}개")
 
@@ -258,8 +297,6 @@ with tab_activity:
     if not rows:
         st.info("로그가 아직 없습니다.")
     else:
-        # 간단 테이블 표현
-        # 원하는 경우 event_type / actor_id / target_type / target_id / created_at 순으로 정렬하여 보여줌
         show_cols = ["created_at", "event_type", "actor_id", "target_type", "target_id", "metadata"]
         for r in rows:
             line = " | ".join(str(r.get(c, "")) for c in show_cols)
