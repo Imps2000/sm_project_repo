@@ -1,5 +1,9 @@
 import os
+import re
+import html
 import streamlit as st
+
+from datetime import datetime, timedelta
 
 from services.posts import (
     create_post, list_feed, get_post,
@@ -47,6 +51,38 @@ def _matches_query(post_row: dict, q: str, all_posts_map: dict) -> bool:
     author  = (row.get("author_id") or "").lower()
     return (q in content) or (q in author)
 
+def _highlight(text: str, q: str) -> str:
+    """
+    본문에 검색어 q(공백 구분 여러 단어 가능)를 <mark>로 하이라이트.
+    - 대소문자 무시
+    - HTML 이스케이프 처리
+    """
+    if not text:
+        return ""
+    esc = html.escape(text)
+    q = (q or "").strip()
+    if not q:
+        return esc
+    
+def _created_at_dt(row: dict) -> datetime:
+    """ISO created_at → datetime (파싱 실패 시 1970-01-01 반환)"""
+    try:
+      return datetime.fromisoformat(row.get("created_at", ""))
+    except Exception:
+      return datetime(1970, 1, 1)
+    
+    # 공백으로 분리된 여러 토큰을 각각 강조 (중복 토큰 제거)
+    tokens = [t for t in {t.lower() for t in q.split() if t.strip()} if t]
+    if not tokens:
+        return esc
+    # 토큰 길이 긴 순으로 치환(부분 중복 방지)
+    tokens.sort(key=len, reverse=True)
+    # 단어 경계 제한 없이 단순 부분 매칭 (한글 포함)
+    for t in tokens:
+        pattern = re.compile(re.escape(t), flags=re.IGNORECASE)
+        esc = pattern.sub(lambda m: f"<mark>{m.group(0)}</mark>", esc)
+    return esc
+
 def _load_posts(scope: str):
     """
     scope: 'all' | 'following'
@@ -73,6 +109,28 @@ def _load_posts(scope: str):
     if q:
         all_map = _all_posts_map()
         rows = [r for r in rows if _matches_query(r, q, all_map)]
+
+    # 4) 기간 필터
+    period = st.session_state.get("sort_period", "전체")
+    now = datetime.now()
+    if period == "24시간":
+        cutoff = now - timedelta(days=1)
+        rows = [r for r in rows if _created_at_dt(r) >= cutoff]
+    elif period == "7일":
+        cutoff = now - timedelta(days=7)
+        rows = [r for r in rows if _created_at_dt(r) >= cutoff]
+    elif period == "30일":
+        cutoff = now - timedelta(days=30)
+        rows = [r for r in rows if _created_at_dt(r) >= cutoff]
+
+    # 5) 정렬
+    mode = st.session_state.get("sort_mode", "최신순")
+    if mode == "최신순":
+        rows.sort(key=lambda r: _created_at_dt(r), reverse=True)
+    elif mode == "좋아요순":
+        rows.sort(key=lambda r: (count_likes(r["post_id"]), _created_at_dt(r)), reverse=True)
+    elif mode == "댓글순":
+        rows.sort(key=lambda r: (count_comments(r["post_id"]), _created_at_dt(r)), reverse=True)
 
     return rows
 
@@ -109,16 +167,33 @@ with tab_feed:
 
     # 🔎 검색 추가
     st.sidebar.header("검색")
-    search_q = st.sidebar.text_input("키워드", value=st.session_state.get("search_q", ""))
+    search_q = st.sidebar.text_input("키워드 (공백으로 여러 단어)", value=st.session_state.get("search_q", ""))
     sc1, sc2 = st.sidebar.columns(2)
     with sc1:
         if st.button("검색 적용", use_container_width=True):
-            st.session_state["search_q"] = (search_q or "").strip().lower()
+            st.session_state["search_q"] = (search_q or "").strip()
             st.rerun()
     with sc2:
         if st.button("검색 해제", use_container_width=True):
             st.session_state["search_q"] = ""
             st.rerun()
+
+    # --- 정렬/기간 ---
+    st.sidebar.header("정렬/기간")
+    sort_mode = st.sidebar.selectbox(
+        "정렬",
+        options=["최신순", "좋아요순", "댓글순"],
+        index={"최신순":0, "좋아요순":1, "댓글순":2}.get(st.session_state.get("sort_mode", "최신순"), 0),
+    )
+    st.session_state["sort_mode"] = sort_mode
+
+    period = st.sidebar.radio(
+        "기간",
+        options=["전체", "24시간", "7일", "30일"],
+        index=["전체", "24시간", "7일", "30일"].index(st.session_state.get("sort_period", "전체")),
+        horizontal=True,
+    )
+    st.session_state["sort_period"] = period
 
     # ---- New Post Form ------------------------------------------------------
     with st.form("new_post"):
@@ -142,6 +217,8 @@ with tab_feed:
     ALL_POSTS = _all_posts_map()
     scope_key = "all" if scope == "전체" else "following"
     posts = _load_posts(scope_key)
+
+    active_query = (st.session_state.get("search_q", "") or "").strip()
 
     for p in posts:
         with st.container(border=True):
@@ -180,10 +257,20 @@ with tab_feed:
                     tags_to_show = []
                 else:
                     st.caption(f"원본: {orig['author_id']} · {orig['created_at']}")
-                    st.write(orig["content"] or "_(본문 없음)_")
+                    # 하이라이트 적용: 원본 본문
+                    orig_content = orig.get("content") or "_(본문 없음)_"
+                    if active_query:
+                        st.markdown(_highlight(orig_content, active_query), unsafe_allow_html=True)
+                    else:
+                        st.write(orig_content)
                     tags_to_show = _post_hashtags(orig["post_id"])
             else:
-                st.write(p["content"] if p["content"] else "_(본문 없음)_")
+                # 일반 포스트 본문 (하이라이트 적용)
+                content_to_show = p["content"] if p["content"] else "_(본문 없음)_"
+                if active_query:
+                    st.markdown(_highlight(content_to_show, active_query), unsafe_allow_html=True)
+                else:
+                    st.write(content_to_show)
                 tags_to_show = _post_hashtags(p["post_id"])
 
             # 해시태그 칩
@@ -254,11 +341,21 @@ with tab_feed:
             for c in roots:
                 with st.container():
                     st.markdown(f"**{c['author_id']}** · {c['created_at']}")
-                    st.write(c["content"])
+                    # 댓글 본문도 하이라이트
+                    c_body = c["content"]
+                    if active_query:
+                        st.markdown(_highlight(c_body, active_query), unsafe_allow_html=True)
+                    else:
+                        st.write(c_body)
+
                     for rc in replies_by_parent.get(c["comment_id"], []):
                         with st.container():
                             st.markdown(f"&nbsp;&nbsp;↳ **{rc['author_id']}** · {rc['created_at']}")
-                            st.write(f"&nbsp;&nbsp;{rc['content']}")
+                            rc_body = rc["content"]
+                            if active_query:
+                                st.markdown(f"&nbsp;&nbsp;{_highlight(rc_body, active_query)}", unsafe_allow_html=True)
+                            else:
+                                st.write(f"&nbsp;&nbsp;{rc_body}")
 
                     # 대댓글 작성
                     reply_key = f"reply-{p['post_id']}-{c['comment_id']}"
