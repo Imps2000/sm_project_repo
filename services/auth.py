@@ -84,3 +84,12 @@ def get_username(user_id: str) -> str:
         if r.get("user_id") == user_id:
             return r.get("username") or user_id
     return user_id
+
+def get_user_by_id(user_id: str):
+    """
+    users.csv 에서 user_id로 한 명 조회 (없으면 None)
+    """
+    for r in _load_users():
+        if r.get("user_id") == user_id:
+            return r
+    return None

@@ -2,3 +2,9 @@ log_id,event_type,actor_id,target_type,target_id,metadata,created_at
 l_0001,POST_CREATED,u_0001,Post,p_0011,"{""preview"": ""ㅁㄴㅇㄻㄴㄹㄴㅁㅇㄹ""}",2025-08-13T10:35:07.412750+09:00
 l_0002,POST_CREATED,u_0001,Post,p_0012,"{""preview"": ""ㅁㄴㅇㄻㄴㄹㄴㅁㅇㄹ""}",2025-08-13T10:35:21.174806+09:00
 l_0003,POST_DELETED,u_0001,Post,p_0012,{},2025-08-13T10:35:27.501831+09:00
+l_0004,POST_CREATED,u_0009,Post,p_0013,"{""preview"": ""프로필 확인용""}",2025-08-13T14:02:09.990243+09:00
+l_0005,REACTION_ADDED,u_0009,Post,p_0013,{},2025-08-13T14:02:20.324654+09:00
+l_0006,COMMENT_CREATED,u_0009,Comment,c_0002,"{""post_id"": ""p_0013"", ""preview"": ""ㅁㅁㅁ""}",2025-08-13T14:02:27.225896+09:00
+l_0007,COMMENT_CREATED,u_0009,Comment,c_0003,"{""post_id"": ""p_0013"", ""preview"": ""asdfas""}",2025-08-13T14:36:20.254243+09:00
+l_0008,REACTION_REMOVED,u_0009,Post,p_0013,{},2025-08-13T14:36:27.288973+09:00
+l_0009,REACTION_ADDED,u_0009,Post,p_0013,{},2025-08-13T14:36:28.125758+09:00
