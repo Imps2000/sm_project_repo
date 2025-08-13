@@ -1,1 +1,4 @@
 log_id,event_type,actor_id,target_type,target_id,metadata,created_at
+l_0001,POST_CREATED,u_0001,Post,p_0011,"{""preview"": ""ㅁㄴㅇㄻㄴㄹㄴㅁㅇㄹ""}",2025-08-13T10:35:07.412750+09:00
+l_0002,POST_CREATED,u_0001,Post,p_0012,"{""preview"": ""ㅁㄴㅇㄻㄴㄹㄴㅁㅇㄹ""}",2025-08-13T10:35:21.174806+09:00
+l_0003,POST_DELETED,u_0001,Post,p_0012,{},2025-08-13T10:35:27.501831+09:00
