@@ -4,6 +4,8 @@ from typing import List, Set
 from repo.csv_repo import read_csv, write_csv, append_csv
 from utils.time import now_kst_iso
 from services.activity import log_event  # 활동 로그
+from repo.csv_repo import read_csv
+
 
 FOLLOWS = os.path.join("data", "follows.csv")
 
@@ -48,3 +50,18 @@ def unfollow(follower_id: str, followee_id: str) -> bool:
     write_csv(FOLLOWS, new_rows)
     log_event("USER_UNFOLLOWED", follower_id, "User", followee_id, {})
     return True
+DATA_DIR = "data"
+FOLLOWS_PATH = os.path.join(DATA_DIR, "follows.csv")
+
+def get_followers(user_id: str):
+    """user_id를 팔로우하는 사람들의 집합(set[str])"""
+    if not os.path.exists(FOLLOWS_PATH):
+        return set()
+    return {r["follower_id"] for r in read_csv(FOLLOWS_PATH) if r.get("followee_id") == user_id}
+
+def follow_counts(user_id: str):
+    """(followers, following) 튜플 반환"""
+    followers = get_followers(user_id)
+    from .follows import get_following  # 순환 import 회피용 지역 import
+    following = get_following(user_id)
+    return len(followers), len(following)

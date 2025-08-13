@@ -22,12 +22,16 @@ from services.comments import create_comment, list_comments, count_comments
 from services.follows import follow, unfollow, is_following, get_following
 from repo.csv_repo import read_csv
 
+from services.profile import get_profile, update_profile
+from services.follows import get_followers  # 새 함수
 # ---- App Setup --------------------------------------------------------------
 st.set_page_config(page_title="My Social Feed", page_icon="🗞️", layout="centered")
 st.title("My Social Feed")
 # 로그인된 사용자 세션에서 읽기 (없으면 None)
 CURRENT_USER = get_current_user_id(st)
 DATA_DIR = "data"
+AVATAR_DIR = os.path.join(DATA_DIR, "avatars")
+os.makedirs(AVATAR_DIR, exist_ok=True)
 POSTS_PATH = os.path.join(DATA_DIR, "posts.csv")
 POST_TAGS_PATH = os.path.join(DATA_DIR, "post_hashtags.csv")
 ACTIVITY_PATH = os.path.join(DATA_DIR, "activity_log.csv")
@@ -221,7 +225,9 @@ if "main_menu" not in st.session_state:
 
 # 라디오 생성 (유일한 라디오, key='main_menu')
 menu = st.sidebar.radio("메뉴", ["피드", "내 프로필"], horizontal=True, key="main_menu")
-
+if menu == "피드" and st.session_state.get("view_user_id"):
+    st.session_state.pop("view_user_id", None)
+    
 if menu == "피드":
     # ---- Tabs -------------------------------------------------------------------
     tab_feed, tab_activity = st.tabs(["📰 피드", "🗂️ 활동 로그"])
@@ -339,18 +345,22 @@ if menu == "피드":
                 # 상단: 작성자/시간 + 팔로우 토글 (내 글이면 숨김)
                 left, right = st.columns([0.70, 0.30])
                 with left:
-                    st.caption(f"작성자: {p['author_id']} · {p['created_at']}")
+                    author_id = p["author_id"]
+                    author_disp = get_display_name(author_id) or author_id
+                    author_handle = get_username(author_id) or author_id
+                    st.caption(f"{p['created_at']}")
+
+                    # 작성자 이름/핸들을 클릭하면 프로필로 이동
+                    if st.button(f"👤 {author_disp} · @{author_handle}", key=f"open-prof-{p['post_id']}", use_container_width=False):
+                        st.session_state["nav_to"] = "내 프로필"
+                        st.session_state["view_user_id"] = author_id
+                        st.rerun()
+
                 with right:
                     if p["author_id"] != CURRENT_USER:
-                        following_now = is_following(CURRENT_USER, p["author_id"])
-                        label = "언팔로우" if following_now else "팔로우"
-                        if st.button(label, key=f"follow-{p['author_id']}-{p['post_id']}"):
-                            if following_now:
-                                ok = unfollow(CURRENT_USER, p["author_id"])
-                                st.toast("언팔로우 완료" if ok else "이미 언팔로우 상태")
-                            else:
-                                ok = follow(CURRENT_USER, p["author_id"])
-                                st.toast("팔로우 완료" if ok else "팔로우할 수 없습니다")
+                        if st.button("프로필 보기", key=f"viewprof-{p['post_id']}"):
+                            st.session_state["nav_to"] = "내 프로필"
+                            st.session_state["view_user_id"] = p["author_id"]
                             st.rerun()
 
                 is_repost = bool(p["original_post_id"])
@@ -528,46 +538,176 @@ if menu == "피드":
 
 # ---- Profile Page ------------------------------------------------------------
 if menu == "내 프로필":
-    st.header("👤 내 프로필")
+    # (추가) 어떤 프로필을 볼지 결정: 기본은 나, 피드에서 넘어오면 view_user_id 사용
+    target_user_id = st.session_state.get("view_user_id", CURRENT_USER)
+    is_me = (target_user_id == CURRENT_USER)
 
-    # 1) 내 기본 정보
-    me = get_user_by_id(CURRENT_USER) or {}
-    disp = me.get("display_name") or me.get("username") or CURRENT_USER
-    # (선택) 핸들도 보여주고 싶다면: handle = get_username(CURRENT_USER); st.caption(f"@{handle}")
-    st.subheader(disp)
-    st.caption(f"가입일: {me.get('created_at', 'N/A')}")
+    # (추가) 공통 프로필 정보 로드
+    target = get_user_by_id(target_user_id) or {}
+    disp = target.get("display_name") or target.get("username") or target_user_id
+    handle = get_username(target_user_id) or target_user_id
 
-    # 2) 내가 쓴 글 목록
-    st.markdown("---")
-    st.subheader("📜 내가 쓴 글")
+    # (추가) 헤더/서브헤더
+    st.header("👤 프로필")
+    st.subheader(f"{disp}")
+    st.caption(f"@{handle} · 가입일: {target.get('created_at','N/A')}")
 
-    # list_feed()로 불러오면 최신 정렬/삭제정책이 그대로라 편함
-    my_posts = [r for r in list_feed(limit=500) if r.get("author_id") == CURRENT_USER]
+    if not is_me:
+        top_cols = st.columns([0.5, 0.5])
+        with top_cols[0]:
+            # 피드로 돌아가기
+            if st.button("⬅️ 피드로", key="back-to-feed"):
+                st.session_state["nav_to"] = "피드"
+                st.session_state.pop("view_user_id", None)
+                st.rerun()
+        with top_cols[1]:
+            # 팔로우/언팔로우 토글
+            following_now = is_following(CURRENT_USER, target_user_id)
+            fl_label = "언팔로우" if following_now else "팔로우"
+            if st.button(fl_label, key=f"follow-on-prof-{target_user_id}"):
+                if following_now:
+                    unfollow(CURRENT_USER, target_user_id)
+                    st.success("언팔로우 완료")
+                else:
+                    follow(CURRENT_USER, target_user_id)
+                    st.success("팔로우 완료")
+                st.rerun()
 
-    if not my_posts:
-        st.info("아직 작성한 글이 없습니다.")
-    else:
-        for p in my_posts:
-            with st.container(border=True):
-                st.caption(f"{p.get('created_at','')}")
-                body = p.get("content") or "_(본문 없음)_"
-                st.write(body)
+        st.markdown("---")
+        st.subheader("📜 게시글")
+        others_posts = [r for r in list_feed(limit=200) if r.get("author_id") == target_user_id]
+        if not others_posts:
+            st.info("게시글이 없습니다.")
+        else:
+            for p in others_posts:
+                with st.container(border=True):
+                    st.caption(f"{p.get('created_at','')}")
+                    st.write(p.get("content") or "_(본문 없음)_")
 
-                # 해시태그 있으면 칩으로
-                tags = _post_hashtags(p["post_id"])
-                if tags:
-                    tag_cols = st.columns(min(4, len(tags)))
-                    for i, t in enumerate(tags):
-                        with tag_cols[i % len(tag_cols)]:
-                            st.button(f"#{t}", key=f"mytag-{p['post_id']}-{t}", disabled=True)
-        
-                # 👍 좋아요/댓글 수 표기 + 👀 피드에서 보기
-                likes = count_likes(p["post_id"])
-                cmts  = count_comments(p["post_id"])
-                st.caption(f"❤️ {likes} · 💬 {cmts}")
-        
-                if st.button("👀 피드에서 보기", key=f"goto-feed-{p['post_id']}"):
-                    # 위젯 키('menu')를 직접 바꾸지 않고, 중간 버퍼(nav_to)만 세팅
-                    st.session_state["nav_to"] = "피드"             # ✅ 라디오 생성 전 프리-훅이 이 값을 menu로 복사
-                    st.session_state["focus_post_id"] = p["post_id"]
+                    tags = _post_hashtags(p["post_id"])
+                    if tags:
+                        tag_cols = st.columns(min(4, len(tags)))
+                        for i, t in enumerate(tags):
+                            with tag_cols[i % len(tag_cols)]:
+                                st.button(f"#{t}", key=f"othertag-{p['post_id']}-{t}", disabled=True)
+
+                    likes = count_likes(p["post_id"])
+                    cmts  = count_comments(p["post_id"])
+                    st.caption(f"❤️ {likes} · 💬 {cmts}")
+
+                    if st.button("👀 피드에서 보기", key=f"goto-feed-from-other-{p['post_id']}"):
+                        st.session_state["nav_to"] = "피드"
+                        st.session_state["focus_post_id"] = p["post_id"]
+                        st.rerun()
+
+        # 여기서 종료 → 아래의 "내 프로필" UI는 실행되지 않음
+        st.stop()
+
+    # 탭: 프로필 / 내 글 / 내 활동
+    t_profile, t_my_posts, t_my_activity = st.tabs(["프로필", "내 글", "내 활동"])
+
+    # ========== 프로필 탭 ==========
+    with t_profile:
+        me = get_profile(CURRENT_USER) or {}
+        disp = me.get("display_name") or me.get("username") or CURRENT_USER
+        handle = get_username(CURRENT_USER)
+        st.subheader(f"{disp}")
+        st.caption(f"@{handle} · 가입일: {me.get('created_at','N/A')}")
+
+        # 팔로워/팔로잉 카운트 + 펼치기
+        from services.follows import get_following, follow_counts
+        fcnt, gcnt = follow_counts(CURRENT_USER)  # (followers, following)
+        c1, c2 = st.columns(2)
+        with c1:
+            with st.expander(f"👥 팔로워 {fcnt}명"):
+                followers = list(get_followers(CURRENT_USER))
+                if followers:
+                    for uid in followers:
+                        st.write(f"- {uid}")
+                else:
+                    st.caption("아직 팔로워가 없습니다.")
+        with c2:
+            with st.expander(f"➡️ 팔로잉 {gcnt}명"):
+                following = list(get_following(CURRENT_USER))
+                if following:
+                    for uid in following:
+                        st.write(f"- {uid}")
+                else:
+                    st.caption("아직 팔로잉이 없습니다.")
+
+        st.markdown("---")
+
+        # 아바타 미리보기
+        avatar_path = me.get("avatar_path") or ""
+        if avatar_path and os.path.exists(avatar_path):
+            st.image(avatar_path, width=120, caption="내 아바타")
+
+        # 프로필 편집 폼
+        with st.form("profile_edit", clear_on_submit=False):
+            new_disp = st.text_input("표시 이름", value=disp)
+            new_bio  = st.text_area("소개(프로필 한 줄/여러 줄 가능)", value=me.get("bio",""), height=80)
+            up = st.file_uploader("아바타 업로드 (PNG/JPG)", type=["png","jpg","jpeg"])
+            s1, s2 = st.columns([0.5, 0.5])
+            with s1:
+                ok = st.form_submit_button("저장")
+            with s2:
+                cancel = st.form_submit_button("취소")
+
+            if ok:
+                avatar_save = avatar_path
+                if up is not None:
+                    # 파일명: user_id 확장자 유지
+                    ext = os.path.splitext(up.name)[1].lower() or ".png"
+                    avatar_save = os.path.join(AVATAR_DIR, f"{CURRENT_USER}{ext}")
+                    with open(avatar_save, "wb") as f:
+                        f.write(up.read())
+                if update_profile(CURRENT_USER, display_name=new_disp.strip(), bio=new_bio.strip(), avatar_path=avatar_save):
+                    st.success("프로필이 저장되었습니다.")
                     st.rerun()
+                else:
+                    st.error("프로필 저장에 실패했습니다.")
+
+    # ========== 내 글 탭 ==========
+    with t_my_posts:
+        st.subheader("📜 내가 쓴 글")
+        my_posts = [r for r in list_feed(limit=500) if r.get("author_id") == CURRENT_USER]
+        if not my_posts:
+            st.info("아직 작성한 글이 없습니다.")
+        else:
+            for p in my_posts:
+                with st.container(border=True):
+                    st.caption(f"{p.get('created_at','')}")
+                    body = p.get("content") or "_(본문 없음)_"
+                    st.write(body)
+
+                    # 해시태그 칩
+                    tags = _post_hashtags(p["post_id"])
+                    if tags:
+                        tag_cols = st.columns(min(4, len(tags)))
+                        for i, t in enumerate(tags):
+                            with tag_cols[i % len(tag_cols)]:
+                                st.button(f"#{t}", key=f"mytag-{p['post_id']}-{t}", disabled=True)
+
+                    # 좋아요/댓글 카운트 + 피드에서 보기
+                    likes = count_likes(p["post_id"])
+                    cmts  = count_comments(p["post_id"])
+                    st.caption(f"❤️ {likes} · 💬 {cmts}")
+
+                    if st.button("👀 피드에서 보기", key=f"goto-feed-{p['post_id']}"):
+                        st.session_state["nav_to"] = "피드"
+                        st.session_state["focus_post_id"] = p["post_id"]
+                        st.rerun()
+
+    # ========== 내 활동 탭 ==========
+    with t_my_activity:
+        st.subheader("🗂️ 내 활동")
+        # 기존 activity_log에서 내 것만 필터
+        rows = _activity_rows(limit=300)
+        my_rows = [r for r in rows if r.get("actor_id") == CURRENT_USER]
+        if not my_rows:
+            st.info("아직 활동 내역이 없습니다.")
+        else:
+            show_cols = ["created_at", "event_type", "target_type", "target_id", "metadata"]
+            for r in my_rows:
+                line = " | ".join(str(r.get(c, "")) for c in show_cols)
+                st.text(line)
