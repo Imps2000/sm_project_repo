@@ -18,3 +18,5 @@ l_0016,COMMENT_CREATED,u_0009,Comment,c_0004,"{""post_id"": ""p_0014"", ""previe
 l_0017,COMMENT_CREATED,u_0009,Comment,c_0005,"{""post_id"": ""p_0014"", ""preview"": ""ㅁ""}",2025-08-13T16:03:29.123094+09:00
 l_0018,COMMENT_CREATED,u_0009,Comment,c_0006,"{""post_id"": ""p_0014"", ""preview"": ""ㅁ""}",2025-08-13T16:03:33.656106+09:00
 l_0019,POST_CREATED,u_0009,Post,p_0018,"{""preview"": ""ㅁ""}",2025-08-13T17:28:29.190006+09:00
+l_0020,POST_CREATED,u_0009,Post,p_0019,"{""preview"": ""1""}",2025-08-14T10:26:45.189246+09:00
+l_0021,REPOST_CREATED,u_0009,Post,p_0020,"{""original_post_id"": ""p_0018""}",2025-08-14T10:27:29.737448+09:00

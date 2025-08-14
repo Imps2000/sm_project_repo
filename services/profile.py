@@ -14,12 +14,21 @@ def _load_users():
 def _save_users(rows):
     # 컬럼 합치기(누락 컬럼 자동 추가)
     base_cols = ["user_id", "username", "password_hash", "display_name", "created_at", "bio", "avatar_path"]
-    # 기존 rows의 키들을 모두 합쳐서 필드 순서 구성
+
+    # 모든 행의 키 유니온
     keys = set()
     for r in rows:
         keys.update(r.keys())
     fieldnames = list(dict.fromkeys(base_cols + list(keys)))
-    write_csv(USERS_PATH, rows, fieldnames=fieldnames)
+
+    # 모든 행을 동일 키 집합으로 정규화
+    normalized_rows = []
+    for r in rows:
+        normalized_rows.append({k: r.get(k, "") for k in fieldnames})
+
+    # csv_repo.write_csv는 fieldnames 인자를 받지 않음
+    write_csv(USERS_PATH, normalized_rows)
+
 
 def get_profile(user_id: str) -> Optional[Dict]:
     for r in _load_users():

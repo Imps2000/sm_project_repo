@@ -2,6 +2,7 @@ import os
 import re
 import html
 import streamlit as st
+import pandas as pd
 
 from services.auth import (
     try_signup, try_login,
@@ -331,340 +332,427 @@ if menu == "피드":
         )
         st.session_state["sort_period"] = period
 
-# ---- Hashtag Editor (새 글 작성용 임시 태그 보관) ---------------------------
+        # ---- Hashtag Editor (새 글 작성용 임시 태그 보관) ---------------------------
 
-if "draft_tags" not in st.session_state:
-    st.session_state["draft_tags"] = []
-
-# 작은 칩(태그) 스타일
-st.markdown(
-    """
-    <style>
-        .tag-chip {
-        display:inline-block;
-        padding:2px 8px;
-        border-radius:12px;
-        background:#f1f3f5;
-        margin:2px 4px 2px 0;
-        font-size:12px;
-        line-height:18px;
-        }
-        .tag-chip small { color:#666; }
-    </style>
-    """,
-    unsafe_allow_html=True,
-)
-
-# ---- New Post Form (본문 왼쪽 / 해시태그 오른쪽) ------------------------
-with st.form("new_post", clear_on_submit=False):
-    left, right = st.columns([0.70, 0.30])
-
-    # 왼쪽: 본문
-    with left:
-        content = st.text_area(
-            "무슨 생각을 하고 있나요?",
-            max_chars=280,
-            height=120,
-            placeholder="텍스트를 입력하세요. 예) 오늘도 코딩!"
-        )
-
-    # 오른쪽: 해시태그 (보조)
-    with right:
-        st.caption("해시태그 (선택) · 최대 5개")
-        # 위젯 생성 전에만 초기화 플래그 처리(예외 방지)
-        if st.session_state.get("clear_new_tag_input", False):
-            st.session_state["new_tag_input"] = ""
-            st.session_state["clear_new_tag_input"] = False
-
-        new_tag_raw = st.text_input(
-            "태그 입력 (쉼표 구분)",
-            value=st.session_state.get("new_tag_input", ""),
-            placeholder="예) python, streamlit",
-            key="new_tag_input",
-        )
-
-        def _normalize_tag(raw: str) -> str:
-            s = (raw or "").strip()
-            if not s:
-                return ""
-            if s.startswith("#"):
-                s = s[1:]
-            s = s.lower()
-            s = re.sub(r"\s+", "-", s)
-            s = re.sub(r"[^0-9a-zA-Zㄱ-ㅎ가-힣_-]", "", s)
-            return s if 1 <= len(s) <= 30 else ""
-
-        def _add_tags_from_raw(raw: str):
-            if not raw:
-                return
-            parts = [p.strip() for p in raw.split(",") if p.strip()]
-            for p in parts:
-                t = _normalize_tag(p)
-                if not t:
-                    continue
-                if t in st.session_state["draft_tags"]:
-                    st.toast(f"이미 추가된 태그: #{t}")
-                    continue
-                if len(st.session_state["draft_tags"]) >= 5:
-                    st.toast("태그는 최대 5개까지 가능해요.")
-                    break
-                st.session_state["draft_tags"].append(t)
-
-        c_add, c_clear = st.columns([0.5, 0.5])
-        with c_add:
-            if st.form_submit_button("태그 추가", use_container_width=True):
-                _add_tags_from_raw(new_tag_raw)
-                st.session_state["clear_new_tag_input"] = True
-                st.rerun()
-        with c_clear:
-            if st.form_submit_button("태그 모두 지우기", use_container_width=True):
-                st.session_state["draft_tags"] = []
-                st.rerun()
-
-        # 작은 칩 렌더링(삭제 버튼은 아주 작게)
-        for t in st.session_state["draft_tags"]:
-            chip_col, x_col = st.columns([0.8, 0.2])
-            with chip_col:
-                st.markdown(f'<span class="tag-chip">#{t}</span>', unsafe_allow_html=True)
-            with x_col:
-                if st.form_submit_button(f"✕", key=f"rm-{t}", use_container_width=True):
-                    st.session_state["draft_tags"] = [x for x in st.session_state["draft_tags"] if x != t]
-                    st.rerun()
-
-    # 하단: 게시 버튼
-    submitted = st.form_submit_button("게시", use_container_width=True)
-    if submitted:
-        try:
-            post_id = create_post(author_id=CURRENT_USER, content=content)
-
-            # 선택적으로 태그 저장
-            tags = st.session_state.get("draft_tags", [])
-            if tags:
-                try:
-                    from services.tags import add_hashtags
-                    add_hashtags(post_id, tags)
-                except Exception:
-                    st.warning("게시물은 저장되었지만 태그 저장 중 문제가 발생했습니다.")
-
-            # 초기화 & 새로고침
+        if "draft_tags" not in st.session_state:
             st.session_state["draft_tags"] = []
-            st.success("작성 완료!")
-            st.rerun()
-        except Exception as e:
-            st.error(f"오류: {e}")
-# ---- Feed ---------------------------------------------------------------
-st.subheader("피드")
-ALL_POSTS = _all_posts_map()
-scope_key = "all" if scope == "전체" else "following"
-posts = _load_posts(scope_key)
-if scope_key == "following" and not posts:
-    st.info("팔로우한 사용자의 게시물이 없습니다. 프로필에서 팔로우를 추가해 보세요.")
 
-active_query = (st.session_state.get("search_q", "") or "").strip()
+        # 작은 칩(태그) 스타일
+        st.markdown(
+            """
+            <style>
+                .tag-chip {
+                display:inline-block;
+                padding:2px 8px;
+                border-radius:12px;
+                background:#f1f3f5;
+                margin:2px 4px 2px 0;
+                font-size:12px;
+                line-height:18px;
+                }
+                .tag-chip small { color:#666; }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
-# 🔎 프로필에서 넘어온 "특정 글만 보기" 포커스
-focus_id = st.session_state.get("focus_post_id")
-if focus_id:
-    focused = [r for r in posts if r.get("post_id") == focus_id]
-    if focused:
-        posts = focused
-        st.info("선택한 게시물만 표시 중")
-        if st.button("⬅️ 모두 보기", key="clear-focus"):
-            st.session_state.pop("focus_post_id", None)
-            st.rerun()
-    else:
-        st.session_state.pop("focus_post_id", None)
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stImage"] img { border-radius: 50% !important; }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
 
-for p in posts:
-    with st.container(border=True):
-        # 상단: 작성자/시간 + 프로필 보기
-        left, right = st.columns([0.70, 0.30])
-        with left:
-            author_id = p["author_id"]
-            author_disp = get_display_name(author_id) or author_id
-            author_handle = get_username(author_id) or author_id
-            st.caption(f"{p['created_at']}")
-            if st.button(f"👤 {author_disp} · @{author_handle}",
-                            key=f"open-prof-{p['post_id']}",
-                            use_container_width=False):
-                st.session_state["nav_to"] = "내 프로필"
-                st.session_state["view_user_id"] = author_id
-                st.rerun()
 
-        with right:
-            if p["author_id"] != CURRENT_USER:
-                if st.button("프로필 보기", key=f"viewprof-{p['post_id']}"):
-                    st.session_state["nav_to"] = "내 프로필"
-                    st.session_state["view_user_id"] = p["author_id"]
-                    st.rerun()
+        # ---- New Post Form (본문 왼쪽 / 해시태그 오른쪽) ------------------------
+        with st.form("new_post", clear_on_submit=False):
+            left, right = st.columns([0.70, 0.30])
 
-        is_repost = bool(p["original_post_id"])
-        interactions_enabled = True
-        tags_to_show = []
+            # 왼쪽: 본문
+            with left:
+                content = st.text_area(
+                    "무슨 생각을 하고 있나요?",
+                    max_chars=280,
+                    height=120,
+                    placeholder="텍스트를 입력하세요. 예) 오늘도 코딩!"
+                )
 
-        # 본문/원본 표시 및 정책 처리
-        if is_repost:
-            st.caption("🔁 리포스트")
-            orig = ALL_POSTS.get(p["original_post_id"])
-            if (orig is None) or (orig.get("is_deleted") == "1"):
-                st.warning("삭제된 게시물")
-                if orig is not None:
-                    st.caption(f"원본 메타: 작성자 {orig.get('author_id','?')} · {orig.get('created_at','?')}")
-                else:
-                    st.caption("원본 메타: 알 수 없음")
-                interactions_enabled = False
-                tags_to_show = []
-            else:
-                st.caption(f"원본: {orig['author_id']} · {orig['created_at']}")
-                orig_content = orig.get("content") or "_(본문 없음)_"
-                if active_query:
-                    st.markdown(_highlight(orig_content, active_query), unsafe_allow_html=True)
-                else:
-                    st.write(orig_content)
-                tags_to_show = _post_hashtags(orig["post_id"])
-        else:
-            content_to_show = p["content"] if p["content"] else "_(본문 없음)_"
-            if active_query:
-                st.markdown(_highlight(content_to_show, active_query), unsafe_allow_html=True)
-            else:
-                st.write(content_to_show)
-            tags_to_show = _post_hashtags(p["post_id"])
+            # 오른쪽: 해시태그 (보조)
+            with right:
+                st.caption("해시태그 (선택) · 최대 5개")
+                # 위젯 생성 전에만 초기화 플래그 처리(예외 방지)
+                if st.session_state.get("clear_new_tag_input", False):
+                    st.session_state["new_tag_input"] = ""
+                    st.session_state["clear_new_tag_input"] = False
 
-        # 해시태그 칩
-        if tags_to_show:
-            tag_cols = st.columns(min(4, len(tags_to_show)))
-            for i, t in enumerate(tags_to_show):
-                with tag_cols[i % len(tag_cols)]:
-                    if st.button(f"#{t}", key=f"tag-{p['post_id']}-{t}"):
-                        st.session_state["filter_tag"] = t
+                new_tag_raw = st.text_input(
+                    "태그 입력 (쉼표 구분)",
+                    value=st.session_state.get("new_tag_input", ""),
+                    placeholder="예) python, streamlit",
+                    key="new_tag_input",
+                )
+
+                def _normalize_tag(raw: str) -> str:
+                    s = (raw or "").strip()
+                    if not s:
+                        return ""
+                    if s.startswith("#"):
+                        s = s[1:]
+                    s = s.lower()
+                    s = re.sub(r"\s+", "-", s)
+                    s = re.sub(r"[^0-9a-zA-Zㄱ-ㅎ가-힣_-]", "", s)
+                    return s if 1 <= len(s) <= 30 else ""
+
+                def _add_tags_from_raw(raw: str):
+                    if not raw:
+                        return
+                    parts = [p.strip() for p in raw.split(",") if p.strip()]
+                    for p in parts:
+                        t = _normalize_tag(p)
+                        if not t:
+                            continue
+                        if t in st.session_state["draft_tags"]:
+                            st.toast(f"이미 추가된 태그: #{t}")
+                            continue
+                        if len(st.session_state["draft_tags"]) >= 5:
+                            st.toast("태그는 최대 5개까지 가능해요.")
+                            break
+                        st.session_state["draft_tags"].append(t)
+
+                c_add, c_clear = st.columns([0.5, 0.5])
+                with c_add:
+                    if st.form_submit_button("태그 추가", use_container_width=True):
+                        _add_tags_from_raw(new_tag_raw)
+                        st.session_state["clear_new_tag_input"] = True
+                        st.rerun()
+                with c_clear:
+                    if st.form_submit_button("태그 모두 지우기", use_container_width=True):
+                        st.session_state["draft_tags"] = []
                         st.rerun()
 
-        # 하단 버튼: 좋아요 / 리포스트 / 댓글
-        cols = st.columns(3)
-        with cols[0]:
-            liked_now = user_liked(p["post_id"], CURRENT_USER)
-            like_label = f"{'❤️' if liked_now else '🤍'} 좋아요 ({count_likes(p['post_id'])})"
-            if st.button(like_label, key=f"like-{p['post_id']}", disabled=not interactions_enabled):
-                liked, _ = toggle_like(p["post_id"], CURRENT_USER)
-                st.toast(("좋아요 해제", "좋아요 추가")[liked])
-                st.rerun()
+                # 작은 칩 렌더링(삭제 버튼은 아주 작게)
+                for t in st.session_state["draft_tags"]:
+                    chip_col, x_col = st.columns([0.8, 0.2])
+                    with chip_col:
+                        st.markdown(f'<span class="tag-chip">#{t}</span>', unsafe_allow_html=True)
+                    with x_col:
+                        # form 내부에서는 form_submit_button을 써야 함. key는 빼고, 라벨을 유니크하게!
+                        if st.form_submit_button(f"✕ #{t}", use_container_width=True):
+                            st.session_state["draft_tags"] = [x for x in st.session_state["draft_tags"] if x != t]
+                            st.rerun()
 
-        with cols[1]:
-            if st.button("🔁 리포스트", key=f"rt-{p['post_id']}", disabled=not interactions_enabled):
+            # 하단: 게시 버튼
+            submitted = st.form_submit_button("게시", use_container_width=True)
+            if submitted:
                 try:
-                    create_post(author_id=CURRENT_USER, content="", original_post_id=p["post_id"])
-                    st.success("리포스트 완료!")
+                    post_id = create_post(author_id=CURRENT_USER, content=content)
+
+                    # 선택적으로 태그 저장
+                    tags = st.session_state.get("draft_tags", [])
+                    if tags:
+                        try:
+                            from services.tags import add_hashtags
+                            add_hashtags(post_id, tags)
+                        except Exception:
+                            st.warning("게시물은 저장되었지만 태그 저장 중 문제가 발생했습니다.")
+
+                    # 초기화 & 새로고침
+                    st.session_state["draft_tags"] = []
+                    st.success("작성 완료!")
                     st.rerun()
                 except Exception as e:
                     st.error(f"오류: {e}")
+        # ---- Feed ---------------------------------------------------------------
+        if menu == "피드":
+            st.subheader("피드")
+            ALL_POSTS = _all_posts_map()
+            # sidebar에서 scope를 못 가져오는 경우를 대비해 기본값 보장
+            scope = st.session_state.get("scope", "전체")
+            scope_key = "all" if scope == "전체" else "following"
+            posts = _load_posts(scope_key)
+        if scope_key == "following" and not posts:
+            st.info("팔로우한 사용자의 게시물이 없습니다. 프로필에서 팔로우를 추가해 보세요.")
 
-        with cols[2]:
-            st.button("💬 댓글", key=f"cm-btn-{p['post_id']}", disabled=not interactions_enabled)
+        active_query = (st.session_state.get("search_q", "") or "").strip()
 
-        # 삭제/복구 UI (내 글만)
-        is_my_post = (p["author_id"] == CURRENT_USER)
-        if is_my_post:
-            with st.expander("게시물 관리", expanded=False):
-                c1, c2 = st.columns(2)
-                with c1:
-                    if st.button("🗑️ 삭제", key=f"del-{p['post_id']}"):
-                        try:
-                            soft_delete_post(p["post_id"], CURRENT_USER)
-                            st.success("삭제 완료 (소프트 딜리트)")
+        # 🔎 프로필에서 넘어온 "특정 글만 보기" 포커스
+        focus_id = st.session_state.get("focus_post_id")
+        if focus_id:
+            focused = [r for r in posts if r.get("post_id") == focus_id]
+            if focused:
+                posts = focused
+                st.info("선택한 게시물만 표시 중")
+                if st.button("⬅️ 모두 보기", key="clear-focus"):
+                    st.session_state.pop("focus_post_id", None)
+                    st.rerun()
+            else:
+                st.session_state.pop("focus_post_id", None)
+
+        for p in posts:
+            with st.container(border=True):
+                # 상단: 작성자/시간 + 프로필 보기
+                left, right = st.columns([0.70, 0.30])
+                with left:
+                    author_id = p["author_id"]
+                    author_disp = get_display_name(author_id) or author_id
+                    author_handle = get_username(author_id) or author_id
+                    _prof = get_profile(author_id) or {}
+                    _avatar = _prof.get("avatar_path") or ""
+
+                    header_cols = st.columns([0.12, 0.88])
+                    with header_cols[0]:
+                        if _avatar and os.path.exists(_avatar):
+                            st.image(_avatar, width=40)
+                    with header_cols[1]:
+                        st.caption(f"{p['created_at']}")
+                        if st.button(
+                            f"{author_disp} · @{author_handle}",
+                            key=f"open-prof-{p['post_id']}",
+                            use_container_width=False
+                        ):
+                            st.session_state["nav_to"] = "내 프로필"
+                            st.session_state["view_user_id"] = author_id
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"오류: {e}")
-                with c2:
-                    if st.button("↩️ 복구(실험용)", key=f"restore-{p['post_id']}"):
-                        try:
-                            restore_post(p["post_id"], CURRENT_USER)
-                            st.success("복구 완료")
+
+
+                with right:
+                    if p["author_id"] != CURRENT_USER:
+                        if st.button("프로필 보기", key=f"viewprof-{p['post_id']}"):
+                            st.session_state["nav_to"] = "내 프로필"
+                            st.session_state["view_user_id"] = p["author_id"]
                             st.rerun()
-                        except Exception as e:
-                            st.error(f"오류: {e}")
 
-        # ----- 댓글 섹션 --------------------------------------------------
-        st.markdown("---")
-        st.caption(f"💬 댓글 {count_comments(p['post_id'])}개")
+                is_repost = bool(p["original_post_id"])
+                interactions_enabled = True
+                tags_to_show = []
 
-        comments = list_comments(p["post_id"])
-        roots = [c for c in comments if not c["parent_comment_id"]]
-        replies_by_parent = {}
-        for c in comments:
-            pid = c["parent_comment_id"]
-            if pid:
-                replies_by_parent.setdefault(pid, []).append(c)
-
-        for c in roots:
-            with st.container():
-                st.markdown(f"**{c['author_id']}** · {c['created_at']}")
-                c_body = c["content"]
-                if active_query:
-                    st.markdown(_highlight(c_body, active_query), unsafe_allow_html=True)
-                else:
-                    st.write(c_body)
-
-                for rc in replies_by_parent.get(c["comment_id"], []):
-                    with st.container():
-                        st.markdown(f"&nbsp;&nbsp;↳ **{rc['author_id']}** · {rc['created_at']}")
-                        rc_body = rc["content"]
-                        if active_query:
-                            st.markdown(f"&nbsp;&nbsp;{_highlight(rc_body, active_query)}", unsafe_allow_html=True)
+                # 본문/원본 표시 및 정책 처리
+                if is_repost:
+                    st.caption("🔁 리포스트")
+                    orig = ALL_POSTS.get(p["original_post_id"])
+                    if (orig is None) or (orig.get("is_deleted") == "1"):
+                        st.warning("삭제된 게시물")
+                        if orig is not None:
+                            st.caption(f"원본 메타: 작성자 {orig.get('author_id','?')} · {orig.get('created_at','?')}")
                         else:
-                            st.write(f"&nbsp;&nbsp;{rc_body}")
+                            st.caption("원본 메타: 알 수 없음")
+                        interactions_enabled = False
+                        tags_to_show = []
+                    else:
+                        st.caption(f"원본: {orig['author_id']} · {orig['created_at']}")
+                        orig_content = orig.get("content") or "_(본문 없음)_"
+                        if active_query:
+                            st.markdown(_highlight(orig_content, active_query), unsafe_allow_html=True)
+                        else:
+                            st.write(orig_content)
+                        tags_to_show = _post_hashtags(orig["post_id"])
+                else:
+                    content_to_show = p["content"] if p["content"] else "_(본문 없음)_"
+                    if active_query:
+                        st.markdown(_highlight(content_to_show, active_query), unsafe_allow_html=True)
+                    else:
+                        st.write(content_to_show)
+                    tags_to_show = _post_hashtags(p["post_id"])
 
-                # 대댓글: 작고 컴팩트한 입력
-                st.markdown('<div style="margin-left: 1.25rem">', unsafe_allow_html=True)
-                with st.expander("↳ 대댓글 달기", expanded=False):
-                    form_key = f"rform-{p['post_id']}-{c['comment_id']}"
-                    with st.form(form_key, clear_on_submit=True):
-                        col_in, col_btn = st.columns([0.80, 0.20])
-                        with col_in:
-                            sub = st.text_input(
-                                label="대댓글 달기",
-                                key=f"rinput-{p['post_id']}-{c['comment_id']}",
-                                placeholder="대댓글을 입력하세요",
-                                label_visibility="collapsed",
-                            )
-                        with col_btn:
-                            sbm = st.form_submit_button("등록", disabled=not interactions_enabled, use_container_width=True)
-                        if sbm:
-                            try:
-                                create_comment(
-                                    post_id=p["post_id"],
-                                    author_id=CURRENT_USER,
-                                    content=sub,
-                                    parent_comment_id=c["comment_id"],
-                                )
-                                st.success("대댓글 작성 완료!")
+                # 해시태그 칩
+                if tags_to_show:
+                    tag_cols = st.columns(min(4, len(tags_to_show)))
+                    for i, t in enumerate(tags_to_show):
+                        with tag_cols[i % len(tag_cols)]:
+                            if st.button(f"#{t}", key=f"tag-{p['post_id']}-{t}"):
+                                st.session_state["filter_tag"] = t
                                 st.rerun()
-                            except Exception as e:
-                                st.error(f"오류: {e}")
-                st.markdown('</div>', unsafe_allow_html=True)
 
-        # 루트 댓글 작성
-        with st.form(f"comment-{p['post_id']}", clear_on_submit=True):
-            comment_text = st.text_input("댓글 달기", placeholder="댓글을 입력하세요")
-            c_submit = st.form_submit_button("등록", disabled=not interactions_enabled)
-            if c_submit:
-                try:
-                    create_comment(post_id=p["post_id"], author_id=CURRENT_USER, content=comment_text)
-                    st.success("댓글 작성 완료!")
+                # 하단 버튼: 좋아요 / 리포스트 / 댓글
+                cols = st.columns(3)
+                with cols[0]:
+                    liked_now = user_liked(p["post_id"], CURRENT_USER)
+                    like_label = f"{'❤️' if liked_now else '🤍'} 좋아요 ({count_likes(p['post_id'])})"
+                    if st.button(like_label, key=f"like-{p['post_id']}", disabled=not interactions_enabled):
+                        liked, _ = toggle_like(p["post_id"], CURRENT_USER)
+                        st.toast(("좋아요 해제", "좋아요 추가")[liked])
+                        st.rerun()
+
+                with cols[1]:
+                    if st.button("🔁 리포스트", key=f"rt-{p['post_id']}", disabled=not interactions_enabled):
+                        try:
+                            create_post(author_id=CURRENT_USER, content="", original_post_id=p["post_id"])
+                            st.success("리포스트 완료!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"오류: {e}")
+
+                with cols[2]:
+                    if st.button("💬 댓글", key=f"cm-btn-{p['post_id']}", disabled=not interactions_enabled):
+                        k = f"open_comments_{p['post_id']}"
+                        st.session_state[k] = not st.session_state.get(k, False)
+                        st.rerun()
+
+
+                # 삭제/복구 UI (내 글만)
+                is_my_post = (p["author_id"] == CURRENT_USER)
+                if is_my_post:
+                    with st.expander("게시물 관리", expanded=False):
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            if st.button("🗑️ 삭제", key=f"del-{p['post_id']}"):
+                                try:
+                                    soft_delete_post(p["post_id"], CURRENT_USER)
+                                    st.success("삭제 완료 (소프트 딜리트)")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"오류: {e}")
+                        with c2:
+                            if st.button("↩️ 복구(실험용)", key=f"restore-{p['post_id']}"):
+                                try:
+                                    restore_post(p["post_id"], CURRENT_USER)
+                                    st.success("복구 완료")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"오류: {e}")
+
+            # ----- 댓글 섹션 --------------------------------------------------
+            st.markdown("---")
+            cm_key = f"open_comments_{p['post_id']}"
+            is_open = st.session_state.get(cm_key, False)
+
+            # 상단 토글 버튼 (개수 표시)
+            topc1, topc2 = st.columns([0.8, 0.2])
+            with topc1:
+                if st.button(
+                    f"💬 댓글 {count_comments(p['post_id'])}개 {'닫기' if is_open else '열기'}",
+                    key=f"cm-toggle-{p['post_id']}",
+                    disabled=not interactions_enabled
+                ):
+                    st.session_state[cm_key] = not is_open
                     st.rerun()
-                except Exception as e:
-                    st.error(f"오류: {e}")
+            with topc2:
+                pass
 
-    with tab_activity:
-        st.subheader("최근 활동 로그")
-        st.caption("POST/REPOST/DELETE/RESTORE/REACTION/COMMENT/USER_FOLLOW 등 이벤트")
-        rows = _activity_rows(limit=100)
-        if not rows:
-            st.info("로그가 아직 없습니다.")
-        else:
-            show_cols = ["created_at", "event_type", "actor_id", "target_type", "target_id", "metadata"]
-            for r in rows:
-                line = " | ".join(str(r.get(c, "")) for c in show_cols)
-                st.text(line)
+            if is_open:
+                comments = list_comments(p["post_id"])
+                roots = [c for c in comments if not c["parent_comment_id"]]
+                replies_by_parent = {}
+                for c in comments:
+                    pid = c["parent_comment_id"]
+                    if pid:
+                        replies_by_parent.setdefault(pid, []).append(c)
+
+                for c in roots:
+                    # 루트 댓글
+                    c_author = c["author_id"]
+                    c_disp = get_display_name(c_author) or c_author
+                    c_handle = get_username(c_author) or c_author
+                    c_prof = get_profile(c_author) or {}
+                    c_avatar = c_prof.get("avatar_path") or ""
+
+                    with st.container():
+                        c1, c2 = st.columns([0.10, 0.90])
+                        with c1:
+                            if c_avatar and os.path.exists(c_avatar):
+                                st.image(c_avatar, width=32)
+                        with c2:
+                            if st.button(
+                                f"{c_disp} · @{c_handle}",
+                                key=f"open-prof-c-{p['post_id']}-{c['comment_id']}",
+                                use_container_width=False
+                            ):
+                                st.session_state["nav_to"] = "내 프로필"
+                                st.session_state["view_user_id"] = c_author
+                                st.rerun()
+                            st.caption(c["created_at"])
+                            c_body = c["content"]
+                            if active_query:
+                                st.markdown(_highlight(c_body, active_query), unsafe_allow_html=True)
+                            else:
+                                st.write(c_body)
+
+                    # 대댓글 목록
+                    for rc in replies_by_parent.get(c["comment_id"], []):
+                        rc_author = rc["author_id"]
+                        rc_disp = get_display_name(rc_author) or rc_author
+                        rc_handle = get_username(rc_author) or rc_author
+                        rc_prof = get_profile(rc_author) or {}
+                        rc_avatar = rc_prof.get("avatar_path") or ""
+
+                        rc1, rc2 = st.columns([0.10, 0.90])
+                        with rc1:
+                            if rc_avatar and os.path.exists(rc_avatar):
+                                st.image(rc_avatar, width=28)
+                        with rc2:
+                            if st.button(
+                                f"{rc_disp} · @{rc_handle}",
+                                key=f"open-prof-r-{p['post_id']}-{rc['comment_id']}",
+                                use_container_width=False
+                            ):
+                                st.session_state["nav_to"] = "내 프로필"
+                                st.session_state["view_user_id"] = rc_author
+                                st.rerun()
+                            st.caption(rc["created_at"])
+                            rc_body = rc["content"]
+                            if active_query:
+                                st.markdown(_highlight(rc_body, active_query), unsafe_allow_html=True)
+                            else:
+                                st.write(rc_body)
+
+                # 대댓글 입력
+                    with st.expander("↳ 대댓글 달기", expanded=False):
+                        form_key = f"rform-{p['post_id']}-{c['comment_id']}"
+                        with st.form(form_key, clear_on_submit=True):
+                            col_in, col_btn = st.columns([0.80, 0.20])
+                            with col_in:
+                                sub = st.text_input(
+                                    label="대댓글 달기",
+                                    key=f"rinput-{p['post_id']}-{c['comment_id']}",
+                                    placeholder="대댓글을 입력하세요",
+                                    label_visibility="collapsed",
+                                )
+                            with col_btn:
+                                sbm = st.form_submit_button("등록", disabled=not interactions_enabled, use_container_width=True)
+                            if sbm:
+                                try:
+                                    create_comment(
+                                        post_id=p["post_id"],
+                                        author_id=CURRENT_USER,
+                                        content=sub,
+                                        parent_comment_id=c["comment_id"],
+                                    )
+                                    st.success("대댓글 작성 완료!")
+                                    st.rerun()
+                                except Exception as e:
+                                    st.error(f"오류: {e}")
+
+                # 루트 댓글 작성
+                with st.form(f"comment-{p['post_id']}", clear_on_submit=True):
+                    comment_text = st.text_input("댓글 달기", placeholder="댓글을 입력하세요")
+                    c_submit = st.form_submit_button("등록", disabled=not interactions_enabled)
+                    if c_submit:
+                        try:
+                            create_comment(post_id=p["post_id"], author_id=CURRENT_USER, content=comment_text)
+                            st.success("댓글 작성 완료!")
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"오류: {e}")
+
+
+                        with tab_activity:
+                            st.subheader("최근 활동 로그")
+                            st.caption("POST/REPOST/DELETE/RESTORE/REACTION/COMMENT/USER_FOLLOW 등 이벤트")
+                            rows = _activity_rows(limit=100)
+                            if not rows:
+                                st.info("로그가 아직 없습니다.")
+                            else:
+                                df = pd.DataFrame(rows)
+                                cols = ["created_at", "event_type", "actor_id", "target_type", "target_id", "metadata"]
+                                for c in cols:
+                                    if c not in df.columns:
+                                        df[c] = ""
+                                df = df[cols]
+                                st.dataframe(df, use_container_width=True, height=360)
+
+
 
 # ---- Profile Page ------------------------------------------------------------
 if menu == "내 프로필":
@@ -770,13 +858,13 @@ if menu == "내 프로필":
         # 아바타 미리보기
         avatar_path = me.get("avatar_path") or ""
         if avatar_path and os.path.exists(avatar_path):
-            st.image(avatar_path, width=120, caption="내 아바타")
+            st.image(avatar_path, width=120, caption="프로필 사진")
 
         # 프로필 편집 폼
         with st.form("profile_edit", clear_on_submit=False):
             new_disp = st.text_input("표시 이름", value=disp)
             new_bio  = st.text_area("소개(프로필 한 줄/여러 줄 가능)", value=me.get("bio",""), height=80)
-            up = st.file_uploader("아바타 업로드 (PNG/JPG)", type=["png","jpg","jpeg"])
+            up = st.file_uploader("프로필 사진 업로드 (PNG/JPG)", type=["png","jpg","jpeg"])
             s1, s2 = st.columns([0.5, 0.5])
             with s1:
                 ok = st.form_submit_button("저장")
@@ -791,11 +879,21 @@ if menu == "내 프로필":
                     avatar_save = os.path.join(AVATAR_DIR, f"{CURRENT_USER}{ext}")
                     with open(avatar_save, "wb") as f:
                         f.write(up.read())
-                if update_profile(CURRENT_USER, display_name=new_disp.strip(), bio=new_bio.strip(), avatar_path=avatar_save):
-                    st.success("프로필이 저장되었습니다.")
-                    st.rerun()
-                else:
-                    st.error("프로필 저장에 실패했습니다.")
+                try:
+                    ok_saved = update_profile(
+                        CURRENT_USER,
+                        display_name=new_disp.strip(),
+                        bio=new_bio.strip(),
+                        avatar_path=avatar_save
+                    )
+                    if ok_saved:
+                        st.success("프로필이 저장되었습니다.")
+                        st.rerun()
+                    else:
+                        st.error("프로필 저장에 실패했습니다.")
+                except Exception as e:
+                    st.error(f"프로필 저장 오류: {e}")
+
 
     # ========== 내 글 탭 ==========
     with t_my_posts:
@@ -837,7 +935,11 @@ if menu == "내 프로필":
         if not my_rows:
             st.info("아직 활동 내역이 없습니다.")
         else:
-            show_cols = ["created_at", "event_type", "target_type", "target_id", "metadata"]
-            for r in my_rows:
-                line = " | ".join(str(r.get(c, "")) for c in show_cols)
-                st.text(line)
+            df = pd.DataFrame(my_rows)
+            cols = ["created_at", "event_type", "target_type", "target_id", "metadata"]
+            for c in cols:
+                if c not in df.columns:
+                    df[c] = ""
+            df = df[cols]
+            st.dataframe(df, use_container_width=True, height=360)
+
